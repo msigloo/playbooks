@@ -1,0 +1,11 @@
+---
+- name: Display system uptime for all hosts
+  hosts: all
+  tasks:
+    - name: Get system uptime
+      command: uptime
+      register: uptime_result
+
+    - name: Display uptime information
+      debug:
+        msg: "Host {{ inventory_hostname }} uptime: {{ uptime_result.stdout }}"
