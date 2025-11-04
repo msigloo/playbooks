@@ -1,5 +1,5 @@
 ---
-- name: Display system uptime for all hosts
+- name: Display system uptime for all hosts!
   hosts: all
   tasks:
     - name: Get system uptime
