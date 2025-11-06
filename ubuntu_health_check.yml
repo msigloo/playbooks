@@ -1,0 +1,77 @@
+---
+# Ansible playbook: Ubuntu routine health check
+- name: Ubuntu routine health check
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    small_disk_threshold_gb: 10     # warn if root available < this
+    high_load_threshold: 1.0        # 1-minute load avg per CPU considered high
+
+  tasks:
+    - name: Check target is Ubuntu
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] is defined
+          - "'Ubuntu' in ansible_facts['distribution']"
+        fail_msg: "This playbook is intended for Ubuntu systems."
+
+    - name: Get 1-minute load average
+      ansible.builtin.shell: cat /proc/loadavg | awk '{print $1}'
+      register: load
+      changed_when: false
+
+    - name: CPU summary
+      ansible.builtin.debug:
+        msg: |
+          CPU cores: {{ ansible_facts.processor_count | default(ansible_facts['processor_cores'] | default(ansible_facts['processor_vcpus'] | default('unknown'))) }}
+          1-min load average: {{ load.stdout }}
+
+    - name: Check for high CPU load (warning)
+      ansible.builtin.debug:
+        msg: "WARNING: High load: {{ load.stdout }} (threshold {{ high_load_threshold }})"
+      when: (load.stdout | float) > high_load_threshold
+
+    - name: Memory summary
+      ansible.builtin.debug:
+        msg: |
+          Total memory: {{ ansible_facts.memtotal_mb | default('unknown') }} MB
+          Free memory:  {{ ansible_facts.memfree_mb | default('unknown') }} MB
+          Swap total:   {{ ansible_facts.swaptotal_mb | default('unknown') }} MB
+          Swap free:    {{ ansible_facts.swapfree_mb | default('unknown') }} MB
+
+    - name: Show full df -h (non-volatile filesystems filtered)
+      ansible.builtin.command: df -h -x tmpfs -x devtmpfs
+      register: df_out
+      changed_when: false
+
+    - name: Display disk usage table
+      ansible.builtin.debug:
+        msg: "\n{{ df_out.stdout }}"
+
+    - name: Get root fs available in KB
+      ansible.builtin.shell: df --output=avail / | tail -1
+      register: root_avail_kb
+      changed_when: false
+
+    - name: Convert root available to GB
+      ansible.builtin.set_fact:
+        root_avail_gb: "{{ (root_avail_kb.stdout | int) / 1024 / 1024 | round(2) }}"
+
+    - name: Root filesystem available (GB)
+      ansible.builtin.debug:
+        msg: "Root available: {{ root_avail_gb }} GB (threshold: {{ small_disk_threshold_gb }} GB)"
+
+    - name: Warn if root filesystem low
+      ansible.builtin.debug:
+        msg: "WARNING: Root filesystem available only {{ root_avail_gb }} GB (< {{ small_disk_threshold_gb }} GB)"
+      when: root_avail_gb is defined and (root_avail_gb | float) < (small_disk_threshold_gb | float)
+
+    - name: Summary status
+      ansible.builtin.debug:
+        msg: |
+          Host: {{ ansible_facts['nodename'] }} ({{ ansible_facts['fqdn'] | default(ansible_facts['nodename']) }})
+          OS:   {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] | default('') }}
+          CPU:  {{ ansible_facts.processor_count | default('unknown') }} cores, load: {{ load.stdout }}
+          Mem:  {{ ansible_facts.memtotal_mb | default('unknown') }} MB total
+          Disk: Root avail {{ root_avail_gb }} GB
